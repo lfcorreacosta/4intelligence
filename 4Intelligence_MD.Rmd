@@ -1,0 +1,1086 @@
+---
+title: "Processo 4intelligence ADS"
+author: "Luis Fernando Corrêa da Costa"
+date: "20/06/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+def.chunk.hook  <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  ifelse(options$size != "normalsize", paste0("\\", options$size,"\n\n", x, "\n\n \\normalsize"), x)
+})
+
+```
+
+```{r pack, message=FALSE, warning=FALSE, include=FALSE}
+#knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(readxl)
+library(glmnet)
+library(fable)
+library(tsibbledata)
+library(tsibble)
+library(lubridate)
+library(gridExtra)
+library(xtable)
+library(gt)
+library(lmtest)
+library(regclass)
+library(stargazer)
+
+
+```
+
+
+```{r dados, message=FALSE, warning=FALSE, include=FALSE}
+
+base <- read_excel("Bases_Final_ADS_Jun2021.xlsx", 
+     sheet = "dados", col_types = c("date", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "numeric", "numeric"))
+
+```
+
+## Questão 1  
+
+Análise Descritiva: Em anexo, você recebeu uma base de dados (Bases Final ADS Jun2021)
+com o consumo de energia residencial, comercial e industrial de cada região brasileira. Faça
+uma análise descritiva das variáveis e, eventualmente, da relação entre elas.
+
+## Questão 2  
+
+Modelagem: Utilizando-se das variáveis fornecidas na base de dados Bases Final ADS Jun2021.xlsx,
+forneça um modelo que projete, com a melhor acurácia possível, o consumo de energia industrial
+da região Sudeste para os próximos 24 meses.
+
+1. Explique o método e a razão de utilizar a abordagem escolhida na sua projeção. Quais
+“insights” podem ser obtidos da modelagem?
+
+2. Forneça medidas para avaliar a qualidade da projeção do modelo.
+
+3. Justifique a escolha das variáveis explicativas e avalie o poder explicativo delas.
+
+## Questão 3
+
+Levando em consideração a modelagem apresentada acima, escolha os 5 melhores modelos
+em termos de acurácia e argumente a razão de tê-los escolhido.
+
+## Questão 4
+
+O que é possível tirar de conclusões a partir dos exercícios 1, 2, e 3?
+
+**Eu procuro responder a todas as questões acima ao longo da análise realizadas nas páginas seguintes**
+
+
+
+```{r dados_man, warning=FALSE, message=FALSE, include=FALSE}
+
+#Neste chunck, as manipulações da base de dados são realizadas
+
+energia_regiao <- select(base, 1:16) %>%
+                  filter(data_tidy < '2021-03-01') %>%
+                  mutate(data_tidy = lubridate::date(data_tidy))
+
+energia_regiao2 <- gather(energia_regiao, "tipo_regiao", "valor", -data_tidy)
+
+energia_regiao <- select(base, 1:16) %>%
+                  filter(data_tidy < '2021-03-01') %>%
+                  mutate(data_tidy = lubridate::date(data_tidy))
+
+energia_regiao2 <- gather(energia_regiao, "tipo_regiao", "valor", -data_tidy) %>%
+                   mutate( setor = rep(c(rep("Comercial",1030), rep("Industrial",1030), rep("Residencial",1030))),
+                  regiao = rep(c(rep("Centro-oeste", 206), rep("Norte", 206), rep("Nordeste", 206), rep("Sul", 206), rep("Sudeste", 206)),3))
+
+energia_regiao2 <- energia_regiao2 %>% unite("set_reg", setor:regiao, sep = '-', remove = FALSE)
+
+
+
+comercial <- energia_regiao2 %>%
+              filter(across(tipo_regiao, ~ grepl('com_', .)))
+
+industrial <- energia_regiao2 %>%
+              filter(across(tipo_regiao, ~ grepl('ind_', .)))
+
+residencial <- energia_regiao2 %>%
+               filter(across(tipo_regiao, ~ grepl('res_', .)))
+
+```
+# Análise descritiva do consumo de energia setorial nas regiões brasileiras
+
+### Plotagem das séries temporais relativas ao consumo de energia nos setores eregiões
+```{r line, fig.align='center', fig.height=8, fig.width=12, message=FALSE, warning=FALSE, include=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+# Aqui, realizo a produção dos gráficos de linha
+
+set_reg <- energia_regiao2 %>%
+            group_by(set_reg) %>%
+            summarise(count = n())
+
+set_reg1 <- as.list(set_reg$set_reg)
+
+mult_gr <- function(reg){
+
+graf <-  energia_regiao2 %>%
+      filter(set_reg == reg) %>%
+      ggplot(aes(data_tidy, valor))+
+      geom_line()+
+      theme(axis.text.x=element_text(hjust=1))+
+      labs(x='', y='Gwh',
+       title=reg) +
+      ggeasy::easy_center_title()
+
+  }
+
+
+line_plots <- lapply(set_reg1, mult_gr)
+names(line_plots) <- (set_reg$set_reg)
+
+```
+
+
+```{r line g, echo=FALSE, fig.align='center', fig.height=13, fig.width=11, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+# Plotagem dos gráficos de linha
+
+  
+grid.arrange(line_plots[[1]], line_plots[[6]], line_plots[[11]],   line_plots[[2]],  line_plots[[7]],  
+             line_plots[[12]], line_plots[[3]], line_plots[[8]],   line_plots[[13]],  line_plots[[4]],
+             line_plots[[9]], line_plots[[14]], line_plots[[5]],   line_plots[[10]],  line_plots[[15]] ,ncol=3, nrow=5)
+  
+
+
+```
+
+A figura acima apresenta as séries temporais mensais do consumo de energia comercial, industrial e residencial nas cinco regiões brasileiras entre janeiro de 2004 e fevereiro de 2021.
+
+A pricipal característica observada é a elevada sazonalidade presente nas séries, especialmente na setor comericial e no consumo residencial.
+Adicionalmente, observa-se o impacto durante os períodos de crise sobre o consumo de energia, sobretudo na indústria, a qual responde mais intesamente à atividade econômica.
+
+As estatísticas descritivas do consumo de energia nos estados são apresentados a seguir em três tabelas classicadas para os setroes analisados.
+
+
+
+## Estatísticas descritivas do consumo de energia nas regiões
+
+### Consumo energia comercial
+
+
+
+```{r com table, echo=FALSE, fig.align='center', fig.height=8, fig.width=12, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+Comercial_s <- energia_regiao2 %>%
+               filter(setor == "Comercial") %>%
+               group_by(regiao) %>%
+               summarise(Min = min(valor),
+                         Max = max(valor),
+                         Media = mean(valor),
+                         Mediana = median(valor),
+                         Desv_pad = sd(valor))
+
+com <- gt(Comercial_s)
+ 
+ com <- 
+  com %>%
+  tab_header(
+    title = "Estatisticas descritivas do consumo de energia no comercio",
+      )
+
+ com
+
+
+```
+
+### Consumo energia residencial
+
+```{r res table, echo=FALSE, fig.align='center', fig.height=8, fig.width=12, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+Residencial_s <- energia_regiao2 %>%
+               filter(setor == "Residencial") %>%
+               group_by(regiao) %>%
+               summarise(Min = min(valor),
+                         Max = max(valor),
+                         Media = mean(valor),
+                         Mediana = median(valor),
+                         Desv_pad = sd(valor))
+
+
+res <- gt(Residencial_s)
+ 
+ res <- 
+  res %>%
+  tab_header(
+    title = "Estatisticas descritivas do consumo de energia residencial",
+      )
+
+ res
+
+
+```
+
+### Consumo energia industrial
+
+```{r ind table, echo=FALSE, fig.align='center', fig.height=8, fig.width=12, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+
+Industrial_s <- energia_regiao2 %>%
+               filter(setor == "Industrial") %>%
+               group_by(regiao) %>%
+               summarise(Min = min(valor),
+                         Max = max(valor),
+                         Media = mean(valor),
+                         Mediana = median(valor),
+                         Desv_pad = sd(valor))
+
+ ind <- gt(Industrial_s)
+ 
+ ind <- 
+  ind %>%
+  tab_header(
+    title = "Estatisticas descritivas do consumo energia na industria",
+      )
+
+ ind
+
+```
+
+As estaísticas descritivas bem como as distribuições das séries do consumo de energia pode ser visualizado na figura a seguir, a qual informa o boxplot das séries de consumo de energia dos estados e setores.
+
+Tal como esperado, a região sudeste se destaca das demais, não apenas por ser a mais populosa, mas também por concentrar a maior parte da atividade econômica do país.
+
+## Boxplot da distribuição do consumo de energia dos setores e por região.
+
+```{r boxplots, echo=FALSE, fig.align='center', fig.height=15, fig.width=20, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+
+
+box1 <- ggplot(industrial, aes(x = tipo_regiao, y = valor, fill = tipo_regiao)) +
+  geom_boxplot() + guides(fill = 'none') + 
+  labs(title="Box plot - Consumo de energia industrial", 
+         y ="Gwh",
+         x = "Região") +
+  ggeasy::easy_center_title()
+
+box2 <- ggplot(comercial, aes(x = tipo_regiao, y = valor, fill = tipo_regiao)) +
+  geom_boxplot() + guides(fill = 'none') +
+  labs(title="Box plot - Consumo de energia comercial", 
+         y ="Gwh",
+         x = "Região") +
+  ggeasy::easy_center_title()
+
+box3 <- ggplot(residencial, aes(x = tipo_regiao, y = valor, fill = tipo_regiao)) +
+  geom_boxplot() + guides(fill = 'none') +
+  labs(title="Box plot - Consumo de energia residencial", 
+         y ="Gwh",
+         x = "Região") +
+  ggeasy::easy_center_title()
+
+grid.arrange(box1, box2, box3, ncol =1, nrow = 3)
+
+```
+
+A correlação entre as variáveis pode ser vista na figura a seguir.
+
+Ressalta-se que uma forte correlação positiva entre as váriáveis em geral. Contudo, dois pontos principais podem ser destacados:
+
+1. Diferentemente da tendência geral, o consumo de energia industrial do nordeste possui uma correlação negativa como as demais variáveis, exceto o consumo industrial do sudeste.
+
+2. Tal como ressaltado, o consumo industrial do nordeste e de do sudeste são positivamente correlacionados. No caso dessa última região, a correlação da energia industrial guarda baixa correlação com as demais variáveis. 
+
+\newpage
+
+## Gráfico de correlação entre o consumo de energia dos setores e regiões do país.
+
+```{r correlacao, echo=FALSE, fig.align='center', fig.height=12, fig.width=16, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+corrplot::corrplot(cor(energia_regiao[,-1]), 'number')
+
+
+```
+\newpage 
+
+# Modelagem 
+
+Essa seção abrda a modelagem do consumo de energia da região industrial do SE e projeção para 22 meses à frente.
+
+## Preparação da base de dados para a modelagem
+
+Os dados foram selecionados após 2012-03-01, uma vez que todas as variáveis possuem observações a partir dessa data.
+
+
+```{r preparação da base, message=FALSE, warning=FALSE, include=FALSE}
+
+
+base2 <- base %>%
+         mutate(date = yearmonth(data_tidy)) %>%
+         filter(data_tidy >= '2012-03-01')
+
+base2 <- as_tsibble(base2, index = date)
+
+train <- na.omit(base2) 
+
+test <- base2 %>%
+        filter(data_tidy >'2021-02-01')
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+## In-sample
+
+train_in <- train %>%
+            filter(data_tidy <= '2019-02-01')
+test_in <- train %>%
+            filter(data_tidy > '2019-02-01')
+
+```
+
+Como exercício inical, analisa-se a correlação entre a variável dependente, o consumo de energia industrial do sudeste, e os regressores.
+A figura a seguir ilustra tais correlações.
+
+```{r correlacao_base, echo=FALSE, fig.align='center', fig.height=8, fig.width=12, message=FALSE, warning=FALSE, out.width="1\\linewidth", results='markup', size='small'}
+
+ se_b <- train %>%
+  
+  select( ind_se, renda_r, pop_ocup_br, massa_r, ind_se, pim_se , du, pmc_a_se, pmc_r_se, temp_max_se, temp_min_se)
+
+corrplot::corrplot(cor(se_b[,-11]), 'number')
+
+```
+
+A despeito das correlações acima vistas, algumas hipóteses podem ser consiradas no tocante dos efeitos das variáveis explicativas sobre o consumo de energia industrial.
+
+1. Espera-se relações positivas entre o consumo de energia e a produção industrial, bem como com variáveis relacionadas à renda, a qual não é afirmada pelas correlações vistas.
+
+2. Pode-se pensar também em relações positivas com o dados de comércio.
+
+## Estimação dos modelos
+
+Para medir a acurácia dos modelos, as projeções são realizadas inicialmente dentro da amostra, ou seja, um sample de treino para a estimação dos modelos e um sample de treino para projeção e avaliações. O sample de treino vai até fevereiro de 2019, ao passo que o sample de teste entre março de 2019 e fevereiro de 2021, ou seja, 24 meses foram reservados para comparar os valores previstos com o valor realizado.
+
+A abordagem para se medir o efeito pretendido é através de estimações de modelos de regressões linear. Dezesseis diferentes especificações foram testadas, em que classifica-se o modelo de acordo com seu poder preditivo para dentro da amostra. Para tal, as medidas de comparação são RMSE, MAE, MPE e MAPE, os quais medem o desvio entre projetado e realizado.
+
+O procedimento é feito da de acordo com os seguintes passos:
+
+* Seleção das variáveis no training sample.
+
+* Estimação da regressão no training sample.
+
+* Criação da matriz para projeção dentro da amostra.
+
+* Realizar a projeção dentro da amosta.
+
+* Cálculo das medidas de acurácia do modelo e comparação.
+
+
+```{r Modelo1, message=TRUE, warning=FALSE, include=FALSE}
+
+test_in1 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se)  # Seleção das variáveis no training sample
+
+fit_in_1 <- train_in %>%
+  fabletools::model(model1 = TSLM(ind_se ~ renda_r + massa_r + pim_se ))   # realizando a regressão no training sample
+  
+
+fore_1 <- new_data(train_in, 24) %>%                           # criando a matriz para projeção dentro da amostra
+             left_join(test_in1, by = 'date') %>%
+             select(date, renda_r , massa_r , pim_se)
+
+fc_1 <- forecast(fit_in_1, new_data = fore_1)                  # fazendo a projeção dentro da amosta
+
+
+ac_f1 <- fc_1 %>%                                               # medidas de acurácia do modelo
+accuracy(test_in1)
+
+
+```
+
+```{r Modelo2, message=TRUE, warning=FALSE, include=FALSE}
+
+test_in2 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se , du)
+
+fit_in_2 <- train_in %>%
+  fabletools::model(model2 = TSLM(ind_se ~ renda_r + massa_r + pim_se + du ))
+  
+
+fore_2 <- new_data(train_in, 24) %>%
+             left_join(test_in2, by = 'date') %>%
+             select(date, renda_r , massa_r , pim_se , du)
+
+fc_2 <- forecast(fit_in_2, new_data = fore_2) 
+
+ac_f2 <- fc_2 %>%
+accuracy(test_in2)
+
+
+```
+
+```{r Modelo3, message=TRUE, warning=FALSE, include=FALSE}
+
+test_in3 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se , du, pmc_a_se)
+
+fit_in_3 <- train_in %>%
+  fabletools::model(model3 = TSLM(ind_se ~ renda_r + massa_r + pim_se + du + pmc_a_se))
+  
+
+
+fore_3 <- new_data(train_in, 24) %>%
+             left_join(test_in3, by = 'date') %>%
+             select(date, renda_r , massa_r , pim_se , du, pmc_a_se)
+
+fc_3 <- forecast(fit_in_3, new_data = fore_3) 
+
+
+ac_f3 <- fc_3 %>%
+accuracy(test_in3)
+
+#print(xtable(ac_f3), comment=FALSE)
+
+```
+
+
+```{r Modelo4, message=TRUE, warning=FALSE, include=FALSE}
+
+test_in4 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se , du, pmc_a_se, pmc_r_se)
+
+fit_in_4 <- train_in %>%
+  fabletools::model(model4 = TSLM(ind_se ~ renda_r + massa_r + pim_se + du + pmc_a_se + pmc_r_se))
+  
+
+fore_4 <- new_data(train_in, 24) %>%
+             left_join(test_in4, by = 'date') %>%
+             select(date, renda_r , massa_r , pim_se , du, pmc_a_se, pmc_r_se)
+
+fc_4 <- forecast(fit_in_4, new_data = fore_4) 
+
+ac_f4 <- fc_4 %>%
+accuracy(test_in4)
+
+
+```
+
+```{r Modelo5, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in5 <- test_in %>%
+            select(date, ind_se, pim_se , du, pmc_a_se, pmc_r_se)
+
+fit_in_5 <- train_in %>%
+  fabletools::model(model5 = TSLM(ind_se ~ pim_se + du + pmc_a_se + pmc_r_se))
+  
+
+fore_5 <- new_data(train_in, 24) %>%
+             left_join(test_in5, by = 'date') %>%
+             select(date, pim_se , du, pmc_a_se, pmc_r_se)
+
+fc_5 <- forecast(fit_in_5, new_data = fore_5) 
+
+ac_f5 <- fc_5 %>%
+accuracy(test_in5)
+
+#print(xtable(ac_f5), comment=FALSE)
+
+```
+
+
+```{r Modelo6, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in6 <- test_in %>%
+            select(date, renda_r, pop_ocup_br, massa_r, ind_se, pim_se , du, pmc_a_se, pmc_r_se, temp_max_se, temp_min_se)
+
+fit_in_6 <- train_in %>%
+  fabletools::model(model6 = TSLM(ind_se ~ renda_r + pop_ocup_br+ massa_r + pim_se + du + pmc_a_se + pmc_r_se + temp_max_se + temp_min_se))
+  
+
+regclass::VIF(lm(formula = ind_se ~ renda_r + pop_ocup_br+ massa_r + pim_se + du + pmc_a_se + pmc_r_se + temp_max_se + temp_min_se, data = train_in))
+
+
+fore_6 <- new_data(train_in, 24) %>%
+             left_join(test_in6, by = 'date') %>%
+             select(date, renda_r, pop_ocup_br, massa_r, pim_se , du, pmc_a_se, pmc_r_se, temp_max_se, temp_min_se)
+
+fc_6 <- forecast(fit_in_6, new_data = fore_6) 
+
+ac_f6 <- fc_6 %>%
+accuracy(test_in6)
+
+#print(xtable(ac_f6), comment=FALSE)
+
+```
+
+
+
+```{r Modelo7, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in7 <- test_in %>%
+            select(date, ind_se, massa_r, pim_se , du, pmc_a_se)
+
+fit_in_7 <- train_in %>%
+  fabletools::model(model7 = TSLM(ind_se ~ massa_r + pim_se + du + pmc_a_se))
+  
+
+fore_7 <- new_data(train_in, 24) %>%
+             left_join(test_in7, by = 'date') %>%
+             select(date,  massa_r , pim_se , du, pmc_a_se)
+
+fc_7 <- forecast(fit_in_7, new_data = fore_7) 
+
+
+ac_f7 <- fc_7 %>%
+accuracy(test_in7)
+```
+
+```{r Modelo8, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in8 <- test_in %>%
+            select(date, ind_se, renda_r, pim_se , du, pmc_a_se)
+
+fit_in_8 <- train_in %>%
+  fabletools::model(model8 = TSLM(ind_se ~ renda_r + pim_se + du + pmc_a_se))
+  
+
+regclass::VIF(lm(formula = ind_se ~ renda_r + pim_se + du + pmc_a_se, data = train_in))
+
+fore_8 <- new_data(train_in, 24) %>%
+             left_join(test_in8, by = 'date') %>%
+             select(date,  renda_r , pim_se , du, pmc_a_se)
+
+fc_8 <- forecast(fit_in_8, new_data = fore_8) 
+
+ac_f8 <- fc_8 %>%
+accuracy(test_in8)
+
+#print(xtable(ac_f8), comment=FALSE)
+
+```
+
+```{r Modelo9, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in9 <- test_in %>%
+            select(date, ind_se,  pim_se , du, pmc_a_se)
+
+fit_in_9 <- train_in %>%
+  fabletools::model(model9 = TSLM(ind_se ~ pim_se + du + pmc_a_se))
+  
+
+fore_9 <- new_data(train_in, 24) %>%
+             left_join(test_in9, by = 'date') %>%
+             select(date,  pim_se , du, pmc_a_se)
+
+fc_9 <- forecast(fit_in_9, new_data = fore_9) 
+
+ac_f9 <- fc_9 %>%
+accuracy(test_in9)
+
+#print(xtable(ac_f9), comment=FALSE)
+
+```
+
+```{r Modelo10, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in10 <- test_in %>%
+            select(date, ind_se, renda_r, pim_se, pmc_a_se)
+
+fit_in_10 <- train_in %>%
+  fabletools::model(model10 = TSLM(ind_se ~ renda_r + pim_se + pmc_a_se))
+  
+
+fore_10 <- new_data(train_in, 24) %>%
+             left_join(test_in10, by = 'date') %>%
+             select(date,  renda_r , pim_se , pmc_a_se)
+
+fc_10 <- forecast(fit_in_10, new_data = fore_10) 
+
+ac_f10 <- fc_10 %>%
+accuracy(test_in10)
+
+#print(xtable(ac_f10), comment=FALSE)
+
+```
+
+```{r Modelo11, message=FALSE, warning=FALSE, include=FALSE}
+
+test_in11 <- test_in %>%
+            select(date, ind_se, massa_r, pim_se , pmc_a_se)
+
+fit_in_11 <- train_in %>%
+  fabletools::model(model11 = TSLM(ind_se ~ massa_r + pim_se + pmc_a_se))
+  
+
+fore_11 <- new_data(train_in, 24) %>%
+             left_join(test_in11, by = 'date') %>%
+             select(date,  massa_r , pim_se , pmc_a_se)
+
+fc_11 <- forecast(fit_in_11, new_data = fore_11) 
+
+
+ac_f11 <- fc_11 %>%
+accuracy(test_in11)
+
+#print(xtable(ac_f11), comment=FALSE)
+
+```
+
+```{r Modelo12, message=FALSE, warning=FALSE, include=FALSE}
+
+train_in12 <- train_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   log_renda_r = log(renda_r), 
+                   log_massa_r = log(massa_r),
+                   log_pim_se = log(pim_se),
+                   du = du,
+                   log_pmc_a_se = log(pmc_a_se))
+
+test_in12 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   log_renda_r = log(renda_r), 
+                   log_massa_r = log(massa_r),
+                   log_pim_se = log(pim_se),
+                   du = du,
+                   log_pmc_a_se = log(pmc_a_se))
+                   
+
+
+fit_in_12 <- train_in12 %>%
+  fabletools::model(model12 = TSLM(ind_se ~ log_renda_r + log_massa_r + log_pim_se + du + log_pmc_a_se))
+  
+
+fore_12 <- new_data(train_in12, 24) %>%
+             left_join(test_in12, by = 'date') %>%
+             select(date, log_renda_r , log_massa_r , log_pim_se , du, log_pmc_a_se)
+
+fc_12 <- forecast(fit_in_12, new_data = fore_12) 
+
+ac_f12 <- fc_12 %>%
+accuracy(test_in12)
+
+#print(xtable(ac_f12), comment=FALSE)
+
+```
+
+```{r Modelo13, message=FALSE, warning=FALSE, include=FALSE}
+
+train_in13 <- train_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   log_massa_r = log(massa_r),
+                   log_pim_se = log(pim_se),
+                   du = du,
+                   log_pmc_a_se = log(pmc_a_se))
+
+test_in13 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   log_massa_r = log(massa_r),
+                   log_pim_se = log(pim_se),
+                    du = du,
+                   log_pmc_a_se = log(pmc_a_se))
+
+test_in13 <- test_in13 %>%
+            select(date, ind_se, log_massa_r, log_pim_se , du, log_pmc_a_se)
+
+fit_in_13 <- train_in13 %>%
+  fabletools::model(model13 = TSLM(ind_se ~ log_massa_r + log_pim_se + du + log_pmc_a_se))
+  
+
+
+fore_13 <- new_data(train_in13, 24) %>%
+             left_join(test_in13, by = 'date') %>%
+             select(date,  log_massa_r , log_pim_se , du, log_pmc_a_se)
+
+fc_13 <- forecast(fit_in_13, new_data = fore_13) 
+
+
+ac_f13 <- fc_13 %>%
+accuracy(test_in13)
+
+#print(xtable(ac_f13), comment=FALSE)
+
+```
+
+```{r Modelo14, message=FALSE, warning=FALSE, include=FALSE}
+
+train_in14 <- train_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   log_massa_r = log(massa_r),
+                   log_pim_se = log(pim_se),
+                   log_pmc_a_se = log(pmc_a_se))
+
+test_in14 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   log_massa_r = log(massa_r),
+                   log_pim_se = log(pim_se),
+                   log_pmc_a_se = log(pmc_a_se))
+
+test_in14 <- test_in14 %>%
+            select(date, ind_se, log_massa_r, log_pim_se , log_pmc_a_se)
+
+fit_in_14 <- train_in14 %>%
+  fabletools::model(model14 = TSLM(ind_se ~ log_massa_r + log_pim_se + log_pmc_a_se))
+  
+
+fore_14 <- new_data(train_in14, 24) %>%
+             left_join(test_in14, by = 'date') %>%
+             select(date,  log_massa_r , log_pim_se , log_pmc_a_se)
+
+fc_14 <- forecast(fit_in_14, new_data = fore_14) 
+
+
+ac_f14 <- fc_14 %>%
+accuracy(test_in14)
+
+#print(xtable(ac_f14), comment=FALSE)
+
+```
+
+```{r Modelo15, message=FALSE, warning=FALSE, include=FALSE}
+
+train_in15 <- train_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   massa_r = (massa_r),
+                   pim_se = (pim_se),
+                   du = du,
+                   pmc_a_se = (pmc_a_se),
+                   lag_ind_se = lag(ind_se))
+
+test_in15 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   massa_r = (massa_r),
+                   pim_se = (pim_se),
+                   du = du,
+                   pmc_a_se = (pmc_a_se),
+                   lag_ind_se = lag(ind_se))
+
+test_in15 <- test_in15 %>%
+            select(date, ind_se, massa_r, pim_se , du, pmc_a_se, lag_ind_se)
+
+fit_in_15 <- train_in15 %>%
+  fabletools::model(model15 = TSLM(ind_se ~ massa_r + pim_se + du + pmc_a_se + lag_ind_se))
+  
+
+
+fore_15 <- new_data(train_in15, 24) %>%
+             left_join(test_in15, by = 'date') %>%
+             select(date,  massa_r , pim_se , du, pmc_a_se, lag_ind_se)
+
+fc_15 <- forecast(fit_in_15, new_data = fore_15) 
+
+
+ac_f15 <- fc_15 %>%
+accuracy(test_in15)
+
+```
+
+```{r Modelo16, message=FALSE, warning=FALSE, include=FALSE}
+
+train_in16 <- train_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   pim_se = (pim_se),
+                   du = du,
+                   lag_ind_se = lag(ind_se))
+
+test_in16 <- test_in %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   pim_se = (pim_se),
+                   du = du,
+                   lag_ind_se = lag(ind_se))
+
+test_in16 <- test_in16 %>%
+            select(date, ind_se, pim_se , du, lag_ind_se)
+
+fit_in_16 <- train_in16 %>%
+  fabletools::model(model16 = TSLM(ind_se ~ pim_se + du + lag_ind_se))
+  
+
+fore_16 <- new_data(train_in16, 24) %>%
+             left_join(test_in16, by = 'date') %>%
+             select(date, pim_se , du, lag_ind_se)
+
+fc_16 <- forecast(fit_in_16, new_data = fore_16) 
+
+
+ac_f16 <- fc_16 %>%
+accuracy(test_in16)
+
+#print(xtable(ac_f16), comment=FALSE)
+
+```
+
+
+## Avaliação dos modelos estimados
+
+A seguinte tabela apresenta os cinco melhores modelos no tocante a acurácia da previsão do consumo de energia industrial do sudeste.
+Estes são ordenados de acordo com as méticas, em que valores menores são preferíveis.
+
+```{r evaluation, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+eval5 <- as_tibble(rbind(ac_f1, ac_f2, ac_f3, ac_f4, ac_f5, ac_f6, ac_f7, ac_f8, ac_f9, ac_f10, ac_f11, ac_f12, ac_f13, ac_f14,
+                          ac_f15, ac_f16)) %>%
+        select(.model,RMSE, MAE, MPE, MAPE )
+
+eval5 <- eval5 %>%
+         arrange(RMSE)
+
+
+  gt(eval5[1:5,]) %>%
+  tab_header(
+    title = "Metricas de avaliacao dos modelos estimados",
+      )
+
+
+```
+
+## Melhor modelo dentro da amostra
+
+Dentre todos os modelos estimados, o modelo 15 apresentou ser o mais acurado para realizar a projeções para dentro da amostra, dadas as métricas vistas na tabela acima.
+
+Pode-se observar através do output da regressão abaixo que a produção industrial do SE, o número de dias úteis e o próprio consumo de energia defasado são significativos para explicar o consumo de energia industrial no SE. Embora não significativos, a massa de rendimento real e PMC amploda mensal foram deixadas no modelo baseada puramente nas métricas para as previsões.
+
+Observa-se assim, que fatores ligados à prórpia indústria são mais signifativos para explicar o consumo de energia do que fatores ligados à renda e ao comércio. No entanto, analisar estas última variáveis defasadas é relevante, uma vez que a indústria tende a responder posteriormente ao aumento da da demanda desencadeado pelo aumento da renda e da atividade comercial. Neste exercício, contudo, nota-se o comportamento autorregrssivo do processo, em que os efeitos consumo de energia tende a se propagar entre dois períodos.
+
+Ademais, o R2 em torno de 0.80, mostra o quanto variações nas variáveis explicativas afetam variações no consumo de energia, o qual é relativamente significativo.
+
+
+
+```{r mylatextable1, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+modelo_15 <- lm(formula = ind_se ~ massa_r + pim_se + du + pmc_a_se + lag_ind_se, data = na.omit(train_in15))
+
+summary(modelo_15)
+
+```
+
+
+No tocante às análise quanto à possíveis problemas econométricos, os seguintes testes foram realizados:
+
+## Teste de heterocedasticidade
+
+Não podemos rejeitar a hipótese nula de resíduos homocedásticos, tal como visto pelo teste Breusch-Pagan abaixo
+```{r het, echo=FALSE, message=FALSE, warning=FALSE}
+
+ht <- lmtest::bptest(modelo_15)
+
+ht
+
+```
+
+## Teste de especificação do modelo.
+
+A hipótese para a correta especificação do modelo não pode ser rejeitada pelo teste RESET abaixo.
+
+```{r reset, echo=FALSE, message=FALSE, warning=FALSE}
+
+ lm <- lmtest::bptest(modelo_15)
+
+lm
+```
+
+## Teste de multicolinearidade
+
+Tal como observado pelas estatística VIF, não há indicação de que os regressores sejam colineares.
+
+```{r vif, echo=FALSE, message=FALSE, warning=FALSE}
+
+ vif <- regclass::VIF(modelo_15)
+
+vif
+```
+
+## Teste de autocorrelação residual
+
+No entanto, observa-se a presença de autorrelação residual, o qual deve afetar a variabilidade dos intervalos de confiança dos parâmetros. A estimação da matriz de confiança robusta é indicada nesse sentido. Como estamos interessados em realizar projeções, relaxamos essa hipótese.  
+
+```{r ac, echo=FALSE, message=FALSE, warning=FALSE}
+
+ac <- lmtest::dwtest(modelo_15)
+
+ac
+```
+
+dwtest(modelo_15)
+
+# Melhores modelos
+
+Em termos de acurácia, o modelo discutido anteriormente é preferível devido às métricas utilizadas para previsão do consumo de energia indutrial do SE dentro da amostra, tal como o RMSE.
+Baseado nessas mesmas estatísticas, os quatro seguintes modelos são apresentados a seguir:
+
+2. Modelo 16
+
+
+```{r M16, echo=FALSE, message=FALSE, warning=FALSE}
+
+modelo_16 <- lm(formula = ind_se ~ pim_se + du + lag_ind_se, data = na.omit(train_in16))
+
+summary(modelo_16)
+
+
+```
+
+3. Modelo 7
+```{r M7, echo=FALSE, message=FALSE, warning=FALSE}
+
+modelo_7 <-  lm(formula = ind_se ~ massa_r + pim_se + du + pmc_a_se, data = train_in)
+
+summary(modelo_7)
+
+
+```
+4. Modelo 13
+
+
+```{r M13, echo=FALSE, message=FALSE, warning=FALSE}
+
+modelo_13 <- lm(formula = ind_se ~ massa_r + pim_se + du + pmc_a_se, data = train_in13)
+
+summary(modelo_13)
+
+```
+
+5. Modelo 3
+```{r M3, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+modelo_3 <-  lm(formula = ind_se ~ renda_r + massa_r + pim_se + du + pmc_a_se, data = train_in) 
+summary(modelo_3)
+
+
+```
+
+## Previsão fora da amostra com o melhor modelo (M15)
+
+A previsão fora da amostra para os 22 meses à frente fora feita da seguinte forma:
+
+1. Reestima-se o modelo com a série completa.
+
+2. Realiza-se a projeção com um modelo sem variáveis defasadas (modelo 7). A projeção para o consumo deste servirá de proxy na matriz de projeção fora da amostra.
+
+3. Realiza-se o forecast do modelo 15 fora da amostra.
+
+O seguinte gráfico apresenta a predição do modelo 15 para o consumo de energia elétric apara os próximos meses.
+
+
+
+
+```{r Modelo7b, message=FALSE, warning=FALSE, include=FALSE}
+
+# Aqui eu uso a projeção do modelo 7 (que não possui variáveis lag) a qual servirá de proxy para o consumo de energia defasada (independente).
+# Esta variável será utilizada como input na matriz de regressores  para fora da amostra. Sobre esta realiza-se a projeção do melhoe modelo (M15)
+
+test_7 <- test %>%
+            select(date, ind_se, massa_r, pim_se , du, pmc_a_se)
+
+fit_7 <- train %>%
+  fabletools::model(model7 = TSLM(ind_se ~ massa_r + pim_se + du + pmc_a_se))
+  
+
+modelo_7 <-  lm(formula = ind_se ~ massa_r + pim_se + du + pmc_a_se, data = train)
+
+
+fore_7 <- new_data(train, 22) %>%
+             left_join(test_7, by = 'date') %>%
+             select(date,  massa_r , pim_se , du, pmc_a_se)
+
+fc_7 <- forecast(fit_7, new_data = fore_7) 
+
+base2 %>%
+autoplot(ind_se) +
+autolayer(fc_7) +
+xlab(NULL) + ylab(NULL) +
+        labs(title="Previsão de consumo de energia para a indústria do SE", 
+        y="Consumo de energia (Gwh)") +
+        ggeasy::easy_center_title() 
+
+
+
+#print(xtable(ac_f7), comment=FALSE)
+
+```
+
+```{r Modelo15_b, echo=FALSE, message=FALSE, warning=FALSE}
+
+train_15 <- train %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   massa_r = (massa_r),
+                   pim_se = (pim_se),
+                   du = du,
+                   pmc_a_se = (pmc_a_se),
+                   ind_se_l = lag(ind_se))
+
+test_15 <- test %>%
+            select(date, ind_se, renda_r, massa_r, pim_se, du, pmc_a_se) %>%
+            mutate(ind_se = ind_se, 
+                   massa_r = (massa_r),
+                   pim_se = (pim_se),
+                   du = du,
+                   pmc_a_se = (pmc_a_se),
+                   ind_se_l = lag(ind_se))
+
+test_15 <- test_15 %>%
+            select(date, ind_se, massa_r, pim_se , du, pmc_a_se, ind_se_l)
+
+
+fit_15 <- train_15 %>%
+  fabletools::model(model15 = TSLM(ind_se ~ massa_r + pim_se + du + pmc_a_se + ind_se_l)) 
+  
+
+ind_se2 <- fc_7$.mean[-1] # eu utilizei o consumo de energia industrial projetado do melhor modelo sem defasagem como proxy.
+
+
+ind_se3 <- c(tail(train_15$ind_se_l,1), ind_se2)
+
+test_15$ind_se_l <- ind_se3
+
+
+fore_15 <- new_data(train_15, 22) %>%
+             left_join(test_15, by = 'date') %>%
+             select(date,  massa_r , pim_se , du, pmc_a_se, ind_se_l)
+
+fc_15 <- forecast(fit_15, new_data = fore_15) 
+
+base2 %>%
+autoplot(ind_se) +
+autolayer(fc_15) +
+xlab(NULL) + ylab(NULL) +
+        labs(title="Previsão de consumo de energia para a indústria do SE", 
+        y="Consumo de energia (Gwh)") +
+        ggeasy::easy_center_title()
+
+
+```
+
+
+# Considerações finais
+
+Através dos exercícios 1 a 3 consegue-se mapear o fenômeno de interesse. Embora chegou-se a especificações para a projeção do consumo de energia industrial no SE, a análise não se encerra nesse ponto. Ganhos de eficiência no contexto preditivo podem ser alcançados ao testar outras especificações para o modelo linear, assim como da utilização de outros procedimentos tal como modelos random forest, apenas para citar um.
+
+Essa sequência de análise define brevemente a forma de abordagem da questão. É necessário explorar as variáveis em contexto, bem como as relações entre as mesmas. Hipóteses iniciais acerca do fenômeno são feitas e em seguida testadas através de estimações. Por fim, projeções para variável de intersses são realizadas e comparações entre as estimações são feitas. Após este primeiro round, o ciclo se reinicia, uma vez que entendemos mais do fenômeno e somos mais ábeis para aperfeiçoar as análises.
+
+
+
+
